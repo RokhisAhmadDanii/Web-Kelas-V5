@@ -5,7 +5,7 @@ import Modal from "@mui/material/Modal"
 import Typography from "@mui/material/Typography"
 import { useSpring, animated } from "@react-spring/web"
 import CloseIcon from "@mui/icons-material/Close"
-import { getStorage, ref, listAll, getDownloadURL, getMetadata } from "firebase/storage"
+import { supabase } from "../supabase" // Import Supabase client
 
 export default function ButtonRequest() {
 	const [open, setOpen] = useState(false)
@@ -21,37 +21,55 @@ export default function ButtonRequest() {
 
 	const [images, setImages] = useState([])
 
-	// Fungsi untuk mengambil daftar gambar dari Firebase Storage
-	const fetchImagesFromFirebase = async () => {
+	// Fungsi untuk mengambil daftar gambar dari Supabase Storage
+	const fetchImagesFromSupabase = async () => {
 		try {
-			const storage = getStorage()
-			const storageRef = ref(storage, "images/")
+			// Mengambil daftar file dari bucket 'gallery-images' folder 'GambarAman/'
+			const { data: files, error } = await supabase.storage
+				.from('gallery-images')
+				.list('GambarAman/', {
+					limit: 100,
+					sortBy: { column: 'created_at', order: 'asc' } // Sorting dari yang terlama
+				})
 
-			const imagesList = await listAll(storageRef)
+			if (error) {
+				console.error("Error listing request files:", error)
+				return
+			}
 
-			const imagePromises = imagesList.items.map(async (item) => {
-				const url = await getDownloadURL(item)
-				const metadata = await getMetadata(item)
+			// Menggunakan signed URLs dan metadata untuk setiap file
+			const imagePromises = files
+				.filter(file => file.name !== '.emptyFolderPlaceholder')
+				.map(async (file) => {
+					const { data: signedUrlData, error: urlError } = await supabase.storage
+						.from('gallery-images')
+						.createSignedUrl(`GambarAman/${file.name}`, 3600) // 1 hour expiry
 
-				return {
-					url,
-					timestamp: metadata.timeCreated,
-				}
-			})
+					if (urlError) {
+						console.error("Error creating signed URL:", urlError)
+						return null
+					}
 
-			const imageURLs = await Promise.all(imagePromises)
+					// Menggunakan created_at dari file metadata sebagai timestamp
+					return {
+						url: signedUrlData.signedUrl,
+						timestamp: file.created_at || new Date().toISOString()
+					}
+				})
 
-			// Urutkan array berdasarkan timestamp (dari yang terlama)
-			imageURLs.sort((a, b) => a.timestamp - b.timestamp)
+			const imageURLs = (await Promise.all(imagePromises)).filter(item => item !== null)
+
+			// Urutkan berdasarkan timestamp (dari yang terlama ke terbaru)
+			imageURLs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
 
 			setImages(imageURLs)
 		} catch (error) {
-			console.error("Error fetching images from Firebase Storage:", error)
+			console.error("Error fetching images from Supabase Storage:", error)
 		}
 	}
 
 	useEffect(() => {
-		fetchImagesFromFirebase()
+		fetchImagesFromSupabase()
 	}, [])
 
 	return (
@@ -77,7 +95,7 @@ export default function ButtonRequest() {
 				<animated.div style={fade}>
 					<Box className="modal-container">
 						<CloseIcon
-							style={{ position: "absolute", top: "10px", right: "10px", cursor: "pointer",color: "grey", }}
+							style={{ position: "absolute", top: "10px", right: "10px", cursor: "pointer", color: "grey" }}
 							onClick={handleClose}
 						/>
 						<Typography id="spring-modal-description" sx={{ mt: 2 }}>
@@ -91,7 +109,7 @@ export default function ButtonRequest() {
 											id="LayoutIsiButtonRequest">
 											<img
 												src={imageData.url}
-												alt={`Image ${index}`}
+												alt={`Request ${index}`}
 												className="h-10 w-10 blur-sm"
 											/>
 											<span className="ml-2 text-white">
