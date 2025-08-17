@@ -4,11 +4,11 @@ import "slick-carousel/slick/slick.css"
 import "slick-carousel/slick/slick-theme.css"
 import ButtonSend from "../components/ButtonSend"
 import ButtonRequest from "../components/ButtonRequest"
-import { getStorage, ref, listAll, getDownloadURL } from "firebase/storage"
+import { supabase } from "../supabase" // Import Supabase client
 import Modal from "@mui/material/Modal"
 import { Box, IconButton } from "@mui/material"
 import CloseIcon from "@mui/icons-material/Close"
-import { useSpring, animated } from "@react-spring/web" // Import the necessary components
+import { useSpring, animated } from "@react-spring/web"
 
 const Carousel = () => {
 	const [images, setImages] = useState([])
@@ -17,32 +17,51 @@ const Carousel = () => {
 
 	const modalFade = useSpring({
 		opacity: open ? 1 : 0,
-		config: { duration: 300 }, // Adjust the duration as needed
+		config: { duration: 300 },
 	})
 
-	// Fungsi untuk mengambil daftar gambar dari Firebase Storage
-	const fetchImagesFromFirebase = async () => {
+	// Fungsi untuk mengambil daftar gambar dari Supabase Storage
+	const fetchImagesFromSupabase = async () => {
 		try {
-			const storage = getStorage() // Mendapatkan referensi Firebase Storage
-			const storageRef = ref(storage, "GambarAman/") // Menggunakan ref dengan storage
+			// Mengambil daftar file dari bucket 'gallery-images'
+			const { data: files, error } = await supabase.storage
+				.from('gallery-images')
+				.list('GambarAman/', {
+					limit: 100,
+					sortBy: { column: 'created_at', order: 'desc' }
+				})
 
-			const imagesList = await listAll(storageRef) // Menggunakan listAll untuk mendapatkan daftar gambar
+			if (error) {
+				console.error("Error listing files:", error)
+				return
+			}
 
-			const imageURLs = await Promise.all(
-				imagesList.items.map(async (item) => {
-					const url = await getDownloadURL(item) // Menggunakan getDownloadURL untuk mendapatkan URL gambar
-					return url
-				}),
-			)
+			// Menggunakan signed URLs untuk private bucket (valid 1 hour)
+			const imageURLPromises = files
+				.filter(file => file.name !== '.emptyFolderPlaceholder')
+				.map(async (file) => {
+					const { data, error } = await supabase.storage
+						.from('gallery-images')
+						.createSignedUrl(`GambarAman/${file.name}`, 3600) // 1 hour expiry
+					
+					if (error) {
+						console.error("Error creating signed URL:", error)
+						return null
+					}
+					
+					return data.signedUrl
+				})
 
+			const imageURLs = (await Promise.all(imageURLPromises)).filter(url => url !== null)
 			setImages(imageURLs)
+
 		} catch (error) {
-			console.error("Error fetching images from Firebase Storage:", error)
+			console.error("Error fetching images from Supabase Storage:", error)
 		}
 	}
 
 	useEffect(() => {
-		fetchImagesFromFirebase()
+		fetchImagesFromSupabase()
 	}, [])
 
 	const settings = {
