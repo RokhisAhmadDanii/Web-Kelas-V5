@@ -24,10 +24,10 @@ export default function ButtonRequest() {
 	// Fungsi untuk mengambil daftar gambar dari Supabase Storage
 	const fetchImagesFromSupabase = async () => {
 		try {
-			// Mengambil daftar file dari bucket 'gallery-images' folder 'GambarAman/'
+			// Mengambil daftar file dari bucket 'gallery-images' folder 'UploadImage/'
 			const { data: files, error } = await supabase.storage
 				.from('gallery-images')
-				.list('GambarAman/', {
+				.list('UploadImage/', {
 					limit: 100,
 					sortBy: { column: 'created_at', order: 'asc' } // Sorting dari yang terlama
 				})
@@ -43,7 +43,7 @@ export default function ButtonRequest() {
 				.map(async (file) => {
 					const { data: signedUrlData, error: urlError } = await supabase.storage
 						.from('gallery-images')
-						.createSignedUrl(`GambarAman/${file.name}`, 3600) // 1 hour expiry
+						.createSignedUrl(`UploadImage/${file.name}`, 3600) // 1 hour expiry
 
 					if (urlError) {
 						console.error("Error creating signed URL:", urlError)
