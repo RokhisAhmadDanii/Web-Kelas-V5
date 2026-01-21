@@ -2,21 +2,19 @@ import * as React from "react"
 import Box from "@mui/material/Box"
 import Typography from "@mui/material/Typography"
 import Slider from "@mui/material/Slider"
-import { supabase } from "../supabase"
+import { databases, DATABASE_ID, RATINGS_COLLECTION_ID, ID } from "../appwrite"
 
 const units = ["/Rating/1.png", "/Rating/2.png", "/Rating/3.png", "/Rating/4.png", "/Rating/5.png"]
 
 export default function Rating() {
     const [value, setValue] = React.useState(() => {
-        // Cek jika ada nilai peringkat terakhir di localStorage
         const lastRating = localStorage.getItem("lastRating")
         return lastRating ? parseFloat(lastRating) : 5.0
     })
 
     const [remainingRatings, setRemainingRatings] = React.useState(() => {
-        // Cek jika ada informasi jumlah rating yang tersisa di localStorage
         const remaining = localStorage.getItem("remainingRatings")
-        return remaining ? parseInt(remaining, 10) : 3 // Defaultnya adalah 3 kali rating
+        return remaining ? parseInt(remaining, 10) : 3
     })
 
     const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -33,40 +31,32 @@ export default function Rating() {
             setValue(newValue)
 
             try {
-                // Insert rating ke Supabase
-                const { data, error } = await supabase
-                    .from('ratings')
-                    .insert({
+                await databases.createDocument(
+                    DATABASE_ID,
+                    RATINGS_COLLECTION_ID,
+                    ID.unique(),
+                    {
                         value: newValue,
-                        timestamp: new Date().toISOString(),
-                        created_at: new Date().toISOString()
-                    })
-                    .select()
+                        timestamp: new Date().toISOString()
+                    }
+                )
 
-                if (error) {
-                    console.error("Error adding rating:", error)
-                    return
-                }
+                console.log("Rating saved successfully")
 
-                console.log("Rating saved successfully:", data)
-
-                // Mengurangi sisa rating yang tersisa
                 const newRemainingRatings = remainingRatings - 1
                 setRemainingRatings(newRemainingRatings)
 
-                // Simpan nilai rating terakhir ke localStorage
                 localStorage.setItem("lastRating", newValue.toString())
-                // Simpan informasi jumlah rating yang tersisa ke localStorage
                 localStorage.setItem("remainingRatings", newRemainingRatings.toString())
-            } catch (e) {
-                console.error("Error adding rating:", e)
+            } catch (error) {
+                console.error("Error adding rating:", error)
             } finally {
                 setIsSubmitting(false)
             }
         }
     }
 
-    const imgIndex = Math.min(Math.floor(value / 2), units.length - 1) // Mengambil indeks terakhir jika melebihi panjang array
+    const imgIndex = Math.min(Math.floor(value / 2), units.length - 1)
 
     return (
         <Box sx={{ width: 307 }}>
