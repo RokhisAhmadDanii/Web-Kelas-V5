@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { supabase } from "../supabase";
+import { databases, DATABASE_ID, CHATS_COLLECTION_ID, BLACKLIST_COLLECTION_ID, ID } from "../appwrite";
+import { Query } from "appwrite";
 import axios from "axios";
 import Swal from "sweetalert2";
 
@@ -12,71 +13,62 @@ function Chat() {
 
   const messagesEndRef = useRef(null);
 
-  // Fungsi untuk mengambil daftar alamat IP yang diblokir dari Supabase
+  // Fetch blocked IPs
   const fetchBlockedIPs = async () => {
     try {
-      const { data, error } = await supabase
-        .from('blacklist_ips')
-        .select('ip_address');
-
-      if (error) {
-        console.error("Error fetching blocked IPs:", error);
-        return [];
-      }
-
-      return data.map(item => item.ip_address);
+      const response = await databases.listDocuments(
+        DATABASE_ID,
+        BLACKLIST_COLLECTION_ID
+      );
+      return response.documents.map(doc => doc.ip_address);
     } catch (error) {
-      console.error("Gagal mengambil daftar IP yang diblokir:", error);
+      console.error("Error fetching blocked IPs:", error);
       return [];
     }
   }
 
   useEffect(() => {
-    // Memuat pesan dari Supabase dan mengatur real-time subscription
+    // Fetch messages
     const fetchMessages = async () => {
-      const { data, error } = await supabase
-        .from('chats')
-        .select('*')
-        .order('timestamp', { ascending: true });
-
-      if (error) {
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          CHATS_COLLECTION_ID,
+          [
+            Query.orderAsc('timestamp'),
+            Query.limit(100)
+          ]
+        );
+        setMessages(response.documents);
+        if (shouldScrollToBottom) {
+          scrollToBottom();
+        }
+      } catch (error) {
         console.error("Error fetching messages:", error);
-        return;
-      }
-
-      setMessages(data);
-      if (shouldScrollToBottom) {
-        scrollToBottom();
       }
     };
 
     fetchMessages();
 
-    // Setup real-time subscription untuk new messages
-    const subscription = supabase
-      .channel('chats')
-      .on('postgres_changes', 
-        { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'chats' 
-        }, 
-        (payload) => {
-          setMessages(prev => [...prev, payload.new]);
+    // Setup realtime subscription
+    const unsubscribe = databases.client.subscribe(
+      `databases.${DATABASE_ID}.collections.${CHATS_COLLECTION_ID}.documents`,
+      response => {
+        if (response.events.includes('databases.*.collections.*.documents.*.create')) {
+          setMessages(prev => [...prev, response.payload]);
           if (shouldScrollToBottom) {
             scrollToBottom();
           }
         }
-      )
-      .subscribe();
+      }
+    );
 
     return () => {
-      supabase.removeChannel(subscription);
+      unsubscribe();
     }
   }, [shouldScrollToBottom]);
 
   useEffect(() => {
-    // Mengambil alamat IP pengguna dan memeriksa batasan pesan
     getUserIp();
     checkMessageCount();
     scrollToBottom();
@@ -90,18 +82,15 @@ function Chat() {
 
   const getUserIp = async () => {
     try {
-      // Cek apakah alamat IP sudah disimpan di localStorage
       const cachedIp = localStorage.getItem("userIp");
       if (cachedIp) {
         setUserIp(cachedIp);
         return;
       }
-      // Jika tidak ada di localStorage, ambil alamat IP dari API eksternal
       const response = await axios.get("https://ipapi.co/json");
       const newUserIp = response.data.network;
       setUserIp(newUserIp);
-      // Simpan alamat IP dalam localStorage dengan waktu kedaluwarsa (misalnya, 1 jam)
-      const expirationTime = new Date().getTime() + 60 * 60 * 1000; // 1 jam
+      const expirationTime = new Date().getTime() + 60 * 60 * 1000;
       localStorage.setItem("userIp", newUserIp);
       localStorage.setItem("ipExpiration", expirationTime.toString());
     } catch (error) {
@@ -116,9 +105,8 @@ function Chat() {
     const storedDateString = localStorage.getItem("messageCountDate");
 
     if (currentDateString === storedDateString) {
-      // Jika tanggal saat ini sama dengan tanggal yang disimpan, periksa batasan pesan
       const userSentMessageCount = parseInt(localStorage.getItem(userIpAddress)) || 0;
-      if (userSentMessageCount >= 20) { // Batasan pesan per hari (20 pesan)
+      if (userSentMessageCount >= 20) {
         Swal.fire({
           icon: "error",
           title: "Message limit exceeded",
@@ -131,13 +119,11 @@ function Chat() {
         setMessageCount(userSentMessageCount);
       }
     } else {
-      // Jika tanggal berbeda, bersihkan data penghitungan pesan sebelumnya
       localStorage.removeItem(userIpAddress);
       localStorage.setItem("messageCountDate", currentDateString);
     }
   };
 
-  // Fungsi untuk memeriksa apakah alamat IP pengguna ada dalam daftar hitam
   const isIpBlocked = async () => {
     const blockedIPs = await fetchBlockedIPs();
     return blockedIPs.includes(userIp);
@@ -145,7 +131,6 @@ function Chat() {
 
   const sendMessage = async () => {
     if (message.trim() !== "") {
-      // Memanggil isIpBlocked untuk memeriksa apakah pengguna diblokir
       const isBlocked = await isIpBlocked();
 
       if (isBlocked) {
@@ -160,11 +145,11 @@ function Chat() {
         return;
       }
 
-      const senderImageURL = "/AnonimUser.png"; // Default user image
+      const senderImageURL = "/AnonimUser.png";
       const trimmedMessage = message.trim().substring(0, 60);
       const userIpAddress = userIp;
 
-      if (messageCount >= 20) { // Batasan pesan per hari (20 pesan)
+      if (messageCount >= 20) {
         Swal.fire({
           icon: "error",
           title: "Message limit exceeded",
@@ -180,17 +165,24 @@ function Chat() {
       localStorage.setItem(userIpAddress, updatedSentMessageCount.toString());
       setMessageCount(updatedSentMessageCount);
 
-      // Menambahkan pesan ke Supabase
-      const { error } = await supabase
-        .from('chats')
-        .insert({
-          message: trimmedMessage,
-          sender_image: senderImageURL,
-          timestamp: new Date().toISOString(),
-          user_ip: userIp,
-        });
+      try {
+        await databases.createDocument(
+          DATABASE_ID,
+          CHATS_COLLECTION_ID,
+          ID.unique(),
+          {
+            message: trimmedMessage,
+            sender_image: senderImageURL,
+            timestamp: new Date().toISOString(),
+            user_ip: userIp,
+          }
+        );
 
-      if (error) {
+        setMessage("");
+        setTimeout(() => {
+          setShouldScrollToBottom(true);
+        }, 100);
+      } catch (error) {
         console.error("Error sending message:", error);
         Swal.fire({
           icon: "error",
@@ -200,13 +192,7 @@ function Chat() {
             container: "sweet-alert-container",
           },
         });
-        return;
       }
-
-      setMessage(""); // Menghapus pesan setelah mengirim
-      setTimeout(() => {
-        setShouldScrollToBottom(true);
-      }, 100);
     }
   };
 
@@ -225,9 +211,9 @@ function Chat() {
 
       <div className="mt-5" id="KotakPesan" style={{ overflowY: "auto" }}>
         {messages.map((msg, index) => (
-          <div key={index} className="flex items-start text-sm py-[1%]">
+          <div key={msg.$id || index} className="flex items-start text-sm py-[1%]">
             <img 
-              src={msg.sender_image || msg.sender?.image || "/AnonimUser.png"} 
+              src={msg.sender_image || "/AnonimUser.png"} 
               alt="User Profile" 
               className="h-7 w-7 mr-2" 
             />
