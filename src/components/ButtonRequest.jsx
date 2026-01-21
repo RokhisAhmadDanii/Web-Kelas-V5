@@ -5,71 +5,57 @@ import Modal from "@mui/material/Modal"
 import Typography from "@mui/material/Typography"
 import { useSpring, animated } from "@react-spring/web"
 import CloseIcon from "@mui/icons-material/Close"
-import { supabase } from "../supabase" // Import Supabase client
+import { storage, BUCKET_ID } from "../appwrite"
 
 export default function ButtonRequest() {
 	const [open, setOpen] = useState(false)
 	const handleOpen = () => setOpen(true)
 	const handleClose = () => setOpen(false)
-
 	const fade = useSpring({
 		opacity: open ? 1 : 0,
 		config: {
 			duration: 200,
 		},
 	})
-
 	const [images, setImages] = useState([])
 
-	// Fungsi untuk mengambil daftar gambar dari Supabase Storage
-	const fetchImagesFromSupabase = async () => {
+	const fetchImagesFromAppwrite = async () => {
 		try {
-			// Mengambil daftar file dari bucket 'gallery-images' folder 'UploadImage/'
-			const { data: files, error } = await supabase.storage
-				.from('gallery-images')
-				.list('UploadImage/', {
-					limit: 100,
-					sortBy: { column: 'created_at', order: 'asc' } // Sorting dari yang terlama
-				})
+			const response = await storage.listFiles(
+				BUCKET_ID,
+				[],
+				100
+			)
 
-			if (error) {
-				console.error("Error listing request files:", error)
-				return
-			}
+			// Filter hanya file yang ada di folder UploadImage/
+			const uploadedFiles = response.files.filter(file => 
+				file.name.startsWith('UploadImage/')
+			)
 
-			// Menggunakan signed URLs dan metadata untuk setiap file
-			const imagePromises = files
-				.filter(file => file.name !== '.emptyFolderPlaceholder')
-				.map(async (file) => {
-					const { data: signedUrlData, error: urlError } = await supabase.storage
-						.from('gallery-images')
-						.createSignedUrl(`UploadImage/${file.name}`, 3600) // 1 hour expiry
+			// Generate preview URLs dengan metadata
+			const imageData = uploadedFiles.map(file => ({
+				url: storage.getFilePreview(
+					BUCKET_ID,
+					file.$id,
+					200,
+					200,
+					'center',
+					80
+				),
+				timestamp: file.$createdAt
+			}))
 
-					if (urlError) {
-						console.error("Error creating signed URL:", urlError)
-						return null
-					}
+			// Sort dari yang terlama
+			imageData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
 
-					// Menggunakan created_at dari file metadata sebagai timestamp
-					return {
-						url: signedUrlData.signedUrl,
-						timestamp: file.created_at || new Date().toISOString()
-					}
-				})
-
-			const imageURLs = (await Promise.all(imagePromises)).filter(item => item !== null)
-
-			// Urutkan berdasarkan timestamp (dari yang terlama ke terbaru)
-			imageURLs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-
-			setImages(imageURLs)
+			setImages(imageData)
 		} catch (error) {
-			console.error("Error fetching images from Supabase Storage:", error)
+			console.error("Error fetching images from Appwrite Storage:", error)
 		}
 	}
 
 	useEffect(() => {
-		fetchImagesFromSupabase()
+		fetchImagesFromAppwrite()
 	}, [])
 
 	return (
@@ -81,7 +67,6 @@ export default function ButtonRequest() {
 				<img src="/Request.png" alt="Icon" className="w-6 h-6 relative bottom-1 " />
 				<span className="text-base lg:text-1xl">Request</span>
 			</button>
-
 			<Modal
 				aria-labelledby="spring-modal-title"
 				aria-describedby="spring-modal-description"
