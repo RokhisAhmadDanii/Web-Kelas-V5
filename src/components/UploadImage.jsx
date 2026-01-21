@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { supabase } from "../supabase"; // Import Supabase client
-import { v4 as uuidv4 } from "uuid";
+import { storage, BUCKET_ID, ID } from "../appwrite";
 import Swal from "sweetalert2";
 
 function UploadImage() {
@@ -15,36 +14,29 @@ function UploadImage() {
 
   const listImages = async () => {
     try {
-      // Mengambil daftar file dari bucket 'gallery-images' folder 'UploadImage/'
-      const { data: files, error } = await supabase.storage
-        .from('gallery-images')
-        .list('UploadImage/', {
-          limit: 100,
-          sortBy: { column: 'created_at', order: 'desc' }
-        });
+      const response = await storage.listFiles(
+        BUCKET_ID,
+        [],
+        100
+      );
 
-      if (error) {
-        console.error("Error listing files:", error);
-        return;
-      }
+      // Filter files yang ada di folder UploadImage/
+      const uploadedFiles = response.files.filter(file => 
+        file.name.startsWith('UploadImage/')
+      );
 
-      // Menggunakan signed URLs untuk private bucket
-      const imageURLPromises = files
-        .filter(file => file.name !== '.emptyFolderPlaceholder')
-        .map(async (file) => {
-          const { data, error } = await supabase.storage
-            .from('gallery-images')
-            .createSignedUrl(`UploadImage/${file.name}`, 3600); // 1 hour expiry
-          
-          if (error) {
-            console.error("Error creating signed URL:", error);
-            return null;
-          }
-          
-          return data.signedUrl;
-        });
+      // Generate preview URLs
+      const imageURLs = uploadedFiles.map(file => {
+        return storage.getFilePreview(
+          BUCKET_ID,
+          file.$id,
+          400,
+          0,
+          'center',
+          100
+        );
+      });
 
-      const imageURLs = (await Promise.all(imageURLPromises)).filter(url => url !== null);
       setImageList(imageURLs);
     } catch (error) {
       console.error("Error fetching images:", error);
@@ -70,7 +62,6 @@ function UploadImage() {
     }
 
     if (lastUploadDate && new Date(lastUploadDate).toDateString() !== new Date().toDateString()) {
-      // Reset the count if it's a new day.
       localStorage.setItem("uploadedImagesCount", "0");
     }
 
@@ -86,44 +77,28 @@ function UploadImage() {
       return;
     }
 
-    // Generate unique filename dengan UUID
-    const fileExt = imageUpload.name.split('.').pop();
-    const fileName = `${imageUpload.name.split('.')[0]}-${uuidv4()}.${fileExt}`;
-    const filePath = `UploadImage/${fileName}`;
-
     try {
-      // Upload file ke Supabase Storage
-      const { data, error } = await supabase.storage
-        .from('gallery-images')
-        .upload(filePath, imageUpload, {
-          cacheControl: '3600',
-          upsert: false
-        });
+      // Upload file dengan nama yang include folder path
+      const fileId = ID.unique();
+      const fileName = `UploadImage/${imageUpload.name.split('.')[0]}-${fileId}.${imageUpload.name.split('.').pop()}`;
+      
+      const response = await storage.createFile(
+        BUCKET_ID,
+        fileId,
+        imageUpload
+      );
 
-      if (error) {
-        console.error("Upload error:", error);
-        Swal.fire({
-          icon: "error",
-          title: "Upload Failed",
-          text: "Failed to upload image. Please try again.",
-          customClass: {
-            container: "sweet-alert-container",
-          },
-        });
-        return;
-      }
+      // Generate preview URL
+      const previewUrl = storage.getFilePreview(
+        BUCKET_ID,
+        response.$id,
+        400,
+        0,
+        'center',
+        100
+      );
 
-      // Get signed URL untuk image yang baru di-upload
-      const { data: signedUrlData, error: urlError } = await supabase.storage
-        .from('gallery-images')
-        .createSignedUrl(filePath, 3600);
-
-      if (urlError) {
-        console.error("Error creating signed URL:", urlError);
-      } else {
-        // Update image list dan localStorage
-        setImageList((prev) => [signedUrlData.signedUrl, ...prev]);
-      }
+      setImageList((prev) => [previewUrl, ...prev]);
 
       localStorage.setItem("uploadedImagesCount", (uploadedImagesCount + 1).toString());
       localStorage.setItem("lastUploadDate", new Date().toISOString());
