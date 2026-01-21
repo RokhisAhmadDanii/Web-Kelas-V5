@@ -4,9 +4,9 @@ import "slick-carousel/slick/slick.css"
 import "slick-carousel/slick/slick-theme.css"
 import ButtonSend from "../components/ButtonSend"
 import ButtonRequest from "../components/ButtonRequest"
-import { supabase } from "../supabase" // Import Supabase client
+import { storage, BUCKET_ID } from "../appwrite"
 import Modal from "@mui/material/Modal"
-import { Box, IconButton } from "@mui/material"
+import { IconButton } from "@mui/material"
 import CloseIcon from "@mui/icons-material/Close"
 import { useSpring, animated } from "@react-spring/web"
 
@@ -20,48 +20,39 @@ const Carousel = () => {
 		config: { duration: 300 },
 	})
 
-	// Fungsi untuk mengambil daftar gambar dari Supabase Storage
-	const fetchImagesFromSupabase = async () => {
+	const fetchImagesFromAppwrite = async () => {
 		try {
-			// Mengambil daftar file dari bucket 'gallery-images'
-			const { data: files, error } = await supabase.storage
-				.from('gallery-images')
-				.list('GambarAman/', {
-					limit: 100,
-					sortBy: { column: 'created_at', order: 'desc' }
-				})
+			const response = await storage.listFiles(
+				BUCKET_ID,
+				[],
+				100
+			)
 
-			if (error) {
-				console.error("Error listing files:", error)
-				return
-			}
+			// Filter hanya file yang namanya dimulai dengan "Carousel"
+			const galleryFiles = response.files.filter(file => 
+				file.name.startsWith('Carousel')
+			)
 
-			// Menggunakan signed URLs untuk private bucket (valid 1 hour)
-			const imageURLPromises = files
-				.filter(file => file.name !== '.emptyFolderPlaceholder')
-				.map(async (file) => {
-					const { data, error } = await supabase.storage
-						.from('gallery-images')
-						.createSignedUrl(`GambarAman/${file.name}`, 3600) // 1 hour expiry
-					
-					if (error) {
-						console.error("Error creating signed URL:", error)
-						return null
-					}
-					
-					return data.signedUrl
-				})
+			// Generate file preview URLs
+			const imageURLs = galleryFiles.map(file => {
+				return storage.getFilePreview(
+					BUCKET_ID,
+					file.$id,
+					2000,
+					0,
+					'center',
+					100
+				)
+			})
 
-			const imageURLs = (await Promise.all(imageURLPromises)).filter(url => url !== null)
 			setImages(imageURLs)
-
 		} catch (error) {
-			console.error("Error fetching images from Supabase Storage:", error)
+			console.error("Error fetching images from Appwrite Storage:", error)
 		}
 	}
 
 	useEffect(() => {
-		fetchImagesFromSupabase()
+		fetchImagesFromAppwrite()
 	}, [])
 
 	const settings = {
